@@ -53,6 +53,24 @@ function generateReturnParcels(profile, partnerConfig) {
     return returnParcels;
 }
 
+/**
+ * Returns an array of adEntries based on mock response data
+ *
+ * @param {object[]} mockData - mock response data
+ */
+function getExpectedAdEntry(mockData) {
+    var expectedAdEntry = [];
+
+    for(var i = 0; i < mockData.length; i++) {
+        expectedAdEntry[i] = {};
+
+        expectedAdEntry[i].price = mockData[i].price;
+        expectedAdEntry[i].dealId = mockData[i].dealid;
+    }
+
+    return expectedAdEntry;
+}
+
 /* =====================================
  * Testing
  * ---------------------------------- */
@@ -66,8 +84,14 @@ describe('parseResponse', function () {
     var libraryStubData = require('./support/libraryStubData.js');
     var partnerModule = proxyquire('../thirty-three-across-htb.js', libraryStubData);
     var partnerConfig = require('./support/mockPartnerConfig.json');
-    var responseData = require('./support/mockResponseData.json');
-    var expect = require('chai').expect;
+    var fs = require('fs');
+    var parseJson = require('parse-json');
+    var path = require('path');
+    var chai = require('chai');
+    var sinon = require('sinon');
+    var sinonChai = require("sinon-chai");
+    var expect = chai.expect;
+    chai.use(sinonChai);
     /* -------------------------------------------------------------------- */
 
     /* Instantiate your partner module */
@@ -76,15 +100,28 @@ describe('parseResponse', function () {
 
     /* Generate dummy return parcels based on MRA partner profile */
     var returnParcels;
-    var result, expectedValue, mockData, returnParcels;
+    var result, expectedValue, mockData, returnParcels, responseData;
+    var registerAd;
 
     describe('should correctly parse bids:', function () {
-        /* Simple type checking on the returned objects, should always pass */
-        it('each parcel should have the required fields set', function () {
+
+        beforeEach(function () {
+            /* spy on RenderService.registerAd function, so that we can test it is called */
+            registerAd = sinon.spy(libraryStubData["space-camp.js"].services.RenderService, 'registerAd');
+
             returnParcels = generateReturnParcels(partnerModule.profile, partnerConfig);
 
             /* Get mock response data from our responseData file */
+            responseData = JSON.parse(fs.readFileSync(path.join(__dirname, './support/mockResponseData.json')));
             mockData = responseData.bid;
+        });
+
+        afterEach(function () {
+            registerAd.restore();
+        });
+
+        /* Simple type checking on the returned objects, should always pass */
+        it('each parcel should have the required fields set', function () {
 
             /* IF SRA, parse all parcels at once */
             if (partnerProfile.architecture) partnerModule.parseResponse(1, mockData, returnParcels);
@@ -145,10 +182,6 @@ describe('parseResponse', function () {
 
         /* ---------- ADD MORE TEST CASES TO TEST AGAINST REAL VALUES ------------*/
         it('each parcel should have the correct values set', function () {
-            returnParcels = generateReturnParcels(partnerModule.profile, partnerConfig);
-
-            /* Get mock response data from our responseData file */
-            mockData = responseData.bid;
 
             /* IF SRA, parse all parcels at once */
             if (partnerProfile.architecture) partnerModule.parseResponse(1, mockData, returnParcels);
@@ -168,17 +201,52 @@ describe('parseResponse', function () {
                 expect(returnParcels[i]).to.exist;
             }
         });
+
+        it('registerAd should be called with correct adEntry', function () {
+            var i, expectedAdEntry = [];
+
+            /* IF SRA, parse all parcels at once */
+            if (partnerProfile.architecture === 1 || partnerProfile.architecture === 2) {
+                expectedAdEntry = getExpectedAdEntry(mockData);
+
+                partnerModule.parseResponse(1, mockData, returnParcels);
+
+                for (var i = 0; i < expectedAdEntry.length; i++){
+                    expect(registerAd).to.have.been.calledWith(sinon.match(expectedAdEntry[i]));
+                }
+            } else if (partnerProfile.architecture === 0) {
+                /* IF MRA, parse one parcel at a time */
+                for (var i = 0; i < mockData.length; i++) {
+                    expectedAdEntry[i] = getExpectedAdEntry(mockData[i]);
+
+                    partnerModule.parseResponse(1, mockData[i], [returnParcels[i]]);
+
+                    for (var j = 0; j < expectedAdEntry[i].length; j++) {
+                        expect(registerAd).to.have.been.calledWith(sinon.match(expectedAdEntry[i][j]));
+                    }
+                }
+            }
+        });
         /* -----------------------------------------------------------------------*/
     });
 
     describe('should correctly parse passes: ', function () {
 
-
-        it('each parcel should have the required fields set', function () {
+        beforeEach(function () {
+            /* spy on RenderService.registerAd function, so that we can test it is called */
+            registerAd = sinon.spy(libraryStubData["space-camp.js"].services.RenderService, 'registerAd');
             returnParcels = generateReturnParcels(partnerModule.profile, partnerConfig);
 
             /* Get mock response data from our responseData file */
+            responseData = JSON.parse(fs.readFileSync(path.join(__dirname, './support/mockResponseData.json')));
             mockData = responseData.pass;
+        });
+
+        afterEach(function () {
+            registerAd.restore();
+        });
+
+        it('each parcel should have the required fields set', function () {
 
             /* IF SRA, parse all parcels at once */
             if (partnerProfile.architecture) partnerModule.parseResponse(1, mockData, returnParcels);
@@ -205,10 +273,6 @@ describe('parseResponse', function () {
 
         /* ---------- ADD MORE TEST CASES TO TEST AGAINST REAL VALUES ------------*/
         it('each parcel should have the correct values set', function () {
-            returnParcels = generateReturnParcels(partnerModule.profile, partnerConfig);
-
-            /* Get mock response data from our responseData file */
-            mockData = responseData.pass;
 
             /* IF SRA, parse all parcels at once */
             if (partnerProfile.architecture) partnerModule.parseResponse(1, mockData, returnParcels);
@@ -228,18 +292,45 @@ describe('parseResponse', function () {
                 expect(returnParcels[i]).to.exist;
             }
         });
+
+        it('registerAd should not be called', function () {
+            var i, expectedAdEntry = {};
+
+            /* IF SRA, parse all parcels at once */
+            if (partnerProfile.architecture === 1 || partnerProfile.architecture === 2) {
+                partnerModule.parseResponse(1, mockData, returnParcels);
+
+                expect(registerAd).to.not.have.been.called;
+            } else if (partnerProfile.architecture === 0) {
+                /* IF MRA, parse one parcel at a time */
+                for (i = 0; i < returnParcels.length; i++) {
+                    partnerModule.parseResponse(1, mockData[i], [returnParcels[i]]);
+
+                    expect(registerAd).to.not.have.been.called;
+                }
+            }
+        });
         /* -----------------------------------------------------------------------*/
     });
 
     describe('should correctly parse deals: ', function () {
 
-        /* Simple type checking on the returned objects, should always pass */
-        it('each parcel should have the required fields set', function () {
+        beforeEach(function () {
+            /* spy on RenderService.registerAd function, so that we can test it is called */
+            registerAd = sinon.spy(libraryStubData["space-camp.js"].services.RenderService, 'registerAd');
             returnParcels = generateReturnParcels(partnerModule.profile, partnerConfig);
 
             /* Get mock response data from our responseData file */
+            responseData = JSON.parse(fs.readFileSync(path.join(__dirname, './support/mockResponseData.json')));
             mockData = responseData.deals;
+        });
 
+        afterEach(function () {
+            registerAd.restore();
+        });
+
+        /* Simple type checking on the returned objects, should always pass */
+        it('each parcel should have the required fields set', function () {
             /* IF SRA, parse all parcels at once */
             if (partnerProfile.architecture) partnerModule.parseResponse(1, mockData, returnParcels);
 
@@ -307,11 +398,6 @@ describe('parseResponse', function () {
 
         /* ---------- ADD MORE TEST CASES TO TEST AGAINST REAL VALUES ------------*/
         it('each parcel should have the correct values set', function () {
-            returnParcels = generateReturnParcels(partnerModule.profile, partnerConfig);
-
-            /* Get mock response data from our responseData file */
-            mockData = responseData.deals;
-
             /* IF SRA, parse all parcels at once */
             if (partnerProfile.architecture) partnerModule.parseResponse(1, mockData, returnParcels);
 
@@ -330,6 +416,75 @@ describe('parseResponse', function () {
                 expect(returnParcels[i]).to.exist;
             }
         });
+
+        it('registerAd should be called with correct adEntry', function () {
+            var i, expectedAdEntry = [];
+
+            /* IF SRA, parse all parcels at once */
+            if (partnerProfile.architecture === 1 || partnerProfile.architecture === 2) {
+                expectedAdEntry = getExpectedAdEntry(mockData);
+
+                partnerModule.parseResponse(1, mockData, returnParcels);
+
+                for (var i = 0; i < expectedAdEntry.length; i++){
+                    expect(registerAd).to.have.been.calledWith(sinon.match(expectedAdEntry[i]));
+                }
+            } else if (partnerProfile.architecture === 0) {
+                /* IF MRA, parse one parcel at a time */
+                for (var i = 0; i < mockData.length; i++) {
+                    expectedAdEntry[i] = getExpectedAdEntry(mockData[i]);
+
+                    partnerModule.parseResponse(1, mockData[i], [returnParcels[i]]);
+
+                    for (var j = 0; j < expectedAdEntry[i].length; j++) {
+                        expect(registerAd).to.have.been.calledWith(sinon.match(expectedAdEntry[i][j]));
+                    }
+                }
+            }
+        });
         /* -----------------------------------------------------------------------*/
+    });
+
+    describe('should correctly parse dealid when no price was sent back: ', function () {
+
+        beforeEach(function () {
+            /* spy on RenderService.registerAd function, so that we can test it is called */
+            registerAd = sinon.spy(libraryStubData["space-camp.js"].services.RenderService, 'registerAd');
+            returnParcels = generateReturnParcels(partnerModule.profile, partnerConfig);
+
+            /* Get mock response data from our responseData file */
+            responseData = JSON.parse(fs.readFileSync(path.join(__dirname, './support/mockResponseData.json')));
+            mockData = responseData.dealid;
+        });
+
+        afterEach(function () {
+            registerAd.restore();
+        });
+
+        it('registerAd should be called with correct adEntry', function () {
+            var i, expectedAdEntry = [];
+
+            /* IF SRA, parse all parcels at once */
+            if (partnerProfile.architecture === 1 || partnerProfile.architecture === 2) {
+                expectedAdEntry = getExpectedAdEntry(mockData);
+
+                partnerModule.parseResponse(1, mockData, returnParcels);
+
+                for (var i = 0; i < expectedAdEntry.length; i++){
+                    expect(registerAd).to.have.been.calledWith(sinon.match(expectedAdEntry[i]));
+                }
+            } else if (partnerProfile.architecture === 0) {
+                /* IF MRA, parse one parcel at a time */
+                for (var i = 0; i < mockData.length; i++) {
+                    expectedAdEntry[i] = getExpectedAdEntry(mockData[i]);
+
+                    partnerModule.parseResponse(1, mockData[i], [returnParcels[i]]);
+
+                    for (var j = 0; j < expectedAdEntry[i].length; j++) {
+                        expect(registerAd).to.have.been.calledWith(sinon.match(expectedAdEntry[i][j]));
+                    }
+                }
+            }
+        });
     });
 });
